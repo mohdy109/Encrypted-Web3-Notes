@@ -1,7 +1,7 @@
 // NoteList.js
 import React, { useEffect, useState } from 'react';
-import { decryptNote } from '../utils/crypto';
-import { getFromIPFS } from '../utils/ipfs';
+import { decryptNote } from '../lib/crypto';
+import { getFromIPFS } from '../lib/ipfs';
 import styled from 'styled-components';
 
 const NoteContainer = styled.div`
@@ -29,14 +29,34 @@ export default function NoteList({ notes, setNotes, encryptionKey }) {
     async function fetchNotes() {
       const resolved = await Promise.all(
         notes.map(async (note) => {
-          const encrypted = await getFromIPFS(note.cid);
-          const decrypted = await decryptNote(encrypted, encryptionKey);
-          return { ...note, content: decrypted };
+          try {
+            const raw = await getFromIPFS(note.cid);
+            const { encrypted, iv } = JSON.parse(raw);
+
+            // Strictly require iv to be an array, else throw
+            if (!Array.isArray(iv)) {
+              throw new Error('Invalid IV format in IPFS note');
+            }
+
+            const ivArray = new Uint8Array(iv);
+            
+            // Make sure encryptionKey is a string!
+            if (typeof encryptionKey !== 'string') {
+              throw new Error('Encryption key must be a string');
+            }
+
+            const decrypted = await decryptNote(encrypted, ivArray, encryptionKey);
+
+            return { ...note, content: decrypted };
+          } catch (err) {
+            console.error(`Failed to decrypt note ${note.cid}:`, err);
+            return { ...note, content: '[Error decrypting note]' };
+          }
         })
       );
       setDecryptedNotes(resolved);
     }
-    fetchNotes();
+    if (notes.length && encryptionKey) fetchNotes();
   }, [notes, encryptionKey]);
 
   function handleDelete(cid) {
